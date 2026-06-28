@@ -13,7 +13,7 @@ st.title("🎫 BetMachine AI - Programul 2 (Autopilot Multi-Day)")
 st.markdown("### 🤖 Algoritm Avansat de Selecție Automatizată pe 4 Zile")
 st.markdown("🎯 **Filtru activ:** Cotă minimă 1.26 | Sincronizare automată 24/7 cu meciurile curente din agenții")
 
-# CONFIGURARE CONT API SOFASCORE DIN DOCUMENTAȚIA TA
+# CONFIGURARE CONT API SOFASCORE
 BASE = "https://rapidapi.com"
 HEADERS = {
     "X-RapidAPI-Key":  "41b44ba4afmshbebf0e0637fc807p12bf84jsn0471b6bfcfea",
@@ -36,9 +36,10 @@ def ruleaza_predictie_ai_cota(cota_1, cota_x, cota_2):
         "P_2": [0.10, 0.55, 0.35, 0.05, 0.75, 0.20, 0.40, 0.65, 0.15, 0.50]
     })
     
-    y_gg =
-    y_o25 =
-    y_ht =
+    # MATRICEA A FOST COMPLETATĂ CU VALORI BINARE (REPARARE SYNTAXERROR)
+    y_gg = [1, 0, 1, 0, 1, 0, 1, 1, 0, 1]
+    y_o25 = [1, 1, 0, 0, 1, 0, 1, 0, 1, 0]
+    y_ht = [1, 1, 1, 0, 1, 0, 1, 0, 1, 1]
     
     m_gg = RandomForestClassifier(n_estimators=30, random_state=42).fit(X_train, y_gg)
     m_o25 = RandomForestClassifier(n_estimators=30, random_state=42).fit(X_train, y_o25)
@@ -48,7 +49,7 @@ def ruleaza_predictie_ai_cota(cota_1, cota_x, cota_2):
     
     def extrage_prob(model):
         res = model.predict_proba(X_live)
-        return float(res) if len(res) > 1 else 0.50
+        return float(res[0][1]) if len(res[0]) > 1 else 0.50
 
     return {"1": p_1, "X": p_x, "2": p_2, "GG": extrage_prob(m_gg), "O25": extrage_prob(m_o25), "HT": extrage_prob(m_ht)}
 
@@ -85,7 +86,7 @@ def descarca_meciuri_zi_sofascore(data_solicitata):
                             if market.get("marketName") == "1X2":
                                 for choice in market.get("choices", []):
                                     frac = choice.get("fractionalValue", "1/1").split('/')
-                                    val_zecimala = float(frac) / float(frac) + 1
+                                    val_zecimala = float(frac[0]) / float(frac[1]) + 1
                                     if choice.get("name") == "1": c1 = val_zecimala
                                     if choice.get("name") == "X": cx = val_zecimala
                                     if choice.get("name") == "2": c2 = val_zecimala
@@ -116,7 +117,7 @@ with st.spinner("Autopilotul scanează meciurile reale din agenții pentru urmă
         if meciuri_zi:
             toate_meciurile_4_zile.extend(meciuri_zi)
 
-# Baza de date locală inteligentă actualizată automat cu data curentă
+# Baza de date locală de siguranță actualizată automat la zi
 if not toate_meciurile_4_zile:
     d1 = azi_obiect.strftime("%d.%m.%Y")
     d2 = (azi_obiect + timedelta(days=1)).strftime("%d.%m.%Y")
@@ -138,12 +139,11 @@ for m in toate_meciurile_4_zile:
     c1, cx, c2 = m["C1"], m["CX"], m["C2"]
     pred = ruleaza_predictie_ai_cota(c1, cx, c2)
     
-    # Siguranța matematică pentru 1X și X2 calculată curat
     cota_1x = round(1 / ((1/c1) + (1/cx)), 2) if c1 > 0 and cx > 0 else 1.30
     cota_x2 = round(1 / ((1/cx) + (1/c2)), 2) if cx > 0 and c2 > 0 else 1.30
     cota_o15 = 1.28
     
-    # FORȚĂM BILETUL VERDE SĂ ADUGE MECIURI PÂNĂ TRECE DE COTA 10.00
+    # FORȚĂM BILETUL VERDE SĂ ADUGE SELECȚII PÂNĂ DEPĂȘEȘTE COTA 10.00
     if cota_s < 10.00:
         if (pred["1"] + pred["X"]) >= 0.50 and cota_1x >= 1.26:
             bilet_sigur.append(f"({m['Data_Formatata']}) {m['Gazde']} ➜ 1X (Cota {cota_1x})")

@@ -1,192 +1,312 @@
 import streamlit as st
-import pandas as pd
-from sklearn.ensemble import RandomForestClassifier
 import requests
-import urllib3
+import math
 from datetime import datetime, timedelta
 
-# Dezactivăm avertismentele SSL pentru conexiuni stabile
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+st.set_page_config(page_title="BetMachine Pro 55", page_icon="🎯", layout="wide")
 
-st.set_page_config(page_title="BetMachine Combo Generator", page_icon="🎫", layout="wide")
-st.title("🎫 BetMachine AI - Programul 2 (Autopilot Multi-Day)")
-st.markdown("### 🤖 Algoritm Avansat de Selecție Automatizată pe 4 Zile")
-st.markdown("🎯 **Filtru activ:** Cotă minimă 1.26 | Sincronizare automată 24/7 cu meciurile curente din agenții")
+# ══════════════════════════════════════════════════════════
+#  CONFIGURARE API — DOAR API-FOOTBALL (meciuri active)
+# ══════════════════════════════════════════════════════════
 
-# CONFIGURARE CONT API SOFASCORE
-BASE = "https://rapidapi.com"
-HEADERS = {
-    "X-RapidAPI-Key":  "41b44ba4afmshbebf0e0637fc807p12bf84jsn0471b6bfcfea",
-    "X-RapidAPI-Host": "://rapidapi.com",
-}
+RAPID_KEY  = st.secrets.get("RAPID_KEY", "b5b1816fbcf28d2f3567bf691e18f86a")
+RAPID_BASE = "https://v3.football.api-sports.io"
+RAPID_HEADERS = {"x-apisports-key": RAPID_KEY}
 
-# === 1. ENGINE AUTOMAT MACHINE LEARNING (RANDOM FOREST) ===
-def ruleaza_predictie_ai_cota(cota_1, cota_x, cota_2):
-    c1 = float(cota_1) if float(cota_1) > 0 else 2.0
-    cx = float(cota_x) if float(cota_x) > 0 else 3.4
-    c2 = float(cota_2) if float(cota_2) > 0 else 3.5
+AZI      = datetime.now()
+AZI_STR  = AZI.strftime("%Y-%m-%d")
+SFARSIT  = (AZI + timedelta(days=7)).strftime("%Y-%m-%d")
 
-    sum_implied = (1/c1) + (1/cx) + (1/c2)
-    p_1 = (1/c1) / sum_implied
-    p_x = (1/cx) / sum_implied
-    p_2 = (1/c2) / sum_implied
-    
-    X_train = pd.DataFrame({
-        "P_1": [0.70, 0.20, 0.40, 0.85, 0.10, 0.55, 0.30, 0.15, 0.60, 0.25],
-        "P_2": [0.10, 0.55, 0.35, 0.05, 0.75, 0.20, 0.40, 0.65, 0.15, 0.50]
-    })
-    
-    # MATRICEA A FOST COMPLETATĂ CU VALORI BINARE (REPARARE SYNTAXERROR)
-    y_gg = [1, 0, 1, 0, 1, 0, 1, 1, 0, 1]
-    y_o25 = [1, 1, 0, 0, 1, 0, 1, 0, 1, 0]
-    y_ht = [1, 1, 1, 0, 1, 0, 1, 0, 1, 1]
-    
-    m_gg = RandomForestClassifier(n_estimators=30, random_state=42).fit(X_train, y_gg)
-    m_o25 = RandomForestClassifier(n_estimators=30, random_state=42).fit(X_train, y_o25)
-    m_ht = RandomForestClassifier(n_estimators=30, random_state=42).fit(X_train, y_ht)
-    
-    X_live = pd.DataFrame([[p_1, p_2]], columns=["P_1", "P_2"])
-    
-    def extrage_prob(model):
-        res = model.predict_proba(X_live)
-        return float(res[0][1]) if len(res[0]) > 1 else 0.50
+# Ligi ACTIVE API-FOOTBALL
+RAPID_LEAGUES = [
+    {"id": 128, "name": "Argentina Primera C 🇦🇷"},
+    {"id": 73,  "name": "Brazilia Série B 🇧🇷"},
+    {"id": 75,  "name": "Brazilia Série C 🇧🇷"},
+    {"id": 244, "name": "Canada Premier League 🇨🇦"},
+    {"id": 265, "name": "Copa Chile 🇨🇱"},
+    {"id": 253, "name": "MLS Next Pro 🇺🇸"},
+    {"id": 981, "name": "USL League Two 🇺🇸"},
+    {"id": 382, "name": "Islanda Besta deild 🇮🇸"},
+    {"id": 169, "name": "Letonia Virsliga 🇱🇻"},
+    {"id": 172, "name": "Lituania TOPLYGA 🇱🇹"},
+    {"id": 113, "name": "Finlanda Ykkonen 🇫🇮"},
+    {"id": 239, "name": "Peru Copa de la Liga 🇵🇪"},
+    {"id": 283, "name": "Uruguay Segunda Division 🇺🇾"},
+    {"id": 288, "name": "Paraguay Division Intermedia 🇵🇾"},
+    {"id": 42,  "name": "Europa U19 Championship 🇪🇺"},
+    {"id": 141, "name": "Insulele Feroe Premier League 🇫ᵒ"},
+]
 
-    return {"1": p_1, "X": p_x, "2": p_2, "GG": extrage_prob(m_gg), "O25": extrage_prob(m_o25), "HT": extrage_prob(m_ht)}
+# ══════════════════════════════════════════════════════════
+#  MOTOR POISSON
+# ══════════════════════════════════════════════════════════
 
-# === 2. EXTRACTORUL LIVE AUTOMAT SOFASCORE PE MULTIPLE ZILE ===
+def poisson_prob(lam, k):
+    if lam <= 0: return 0.0
+    return (lam**k * math.exp(-lam)) / math.factorial(k)
+
+def calculeaza_prob(lam_h=1.35, lam_a=1.10):
+    p1 = px = p2 = p_gg = p_o25 = 0.0
+    for i in range(7):
+        for j in range(7):
+            p = poisson_prob(lam_h, i) * poisson_prob(lam_a, j)
+            if i > j:    p1  += p
+            elif i == j: px  += p
+            else:        p2  += p
+            if i > 0 and j > 0: p_gg  += p
+            if i + j > 2:       p_o25 += p
+    total = p1 + px + p2
+    if total > 0: p1, px, p2 = p1/total, px/total, p2/total
+    return {
+        "p1": round(p1,3), "px": round(px,3), "p2": round(p2,3),
+        "p_gg": round(p_gg,3), "p_o25": round(p_o25,3),
+        "lam_h": round(lam_h,2), "lam_a": round(lam_a,2)
+    }
+
+def prob_to_cota(prob, marja=0.07):
+    if prob <= 0.01: return 50.0
+    return round(1 / (prob * (1 + marja)), 2)
+
+def lam_din_standing(gf, ga, played, acasa=True):
+    if played == 0: return (1.35 if acasa else 1.10)
+    gf_m = gf / played
+    ga_m = ga / played
+    atac = gf_m / 1.2
+    aparare = ga_m / 1.2
+    if acasa:
+        return round(max(atac * 1.2 * 1.10, 0.3), 2)
+    else:
+        return round(max(atac * 1.2 * 0.90, 0.3), 2)
+
+# ══════════════════════════════════════════════════════════
+#  API-FOOTBALL — DOAR MECIURI ACTIVE
+# ══════════════════════════════════════════════════════════
+
 @st.cache_data(ttl=1800)
-def descarca_meciuri_zi_sofascore(data_solicitata):
-    timezone_offset = 7200
-    meciuri_procesate = []
+def get_rapid_fixtures(league_id, season=2026):
     try:
-        url_cat = f"{BASE}/api/v1/sport/football/{data_solicitata}/{timezone_offset}/categories"
-        resp_cat = requests.get(url_cat, headers=HEADERS, timeout=6).json()
-        categories = resp_cat.get("categories", [])
-        
-        for cat in categories[:20]:
-            cat_id = cat["category"]["id"]
-            cat_name = cat["category"]["name"]
-            
-            url_events = f"{BASE}/api/v1/category/{cat_id}/scheduled-events/{data_solicitata}"
-            resp_events = requests.get(url_events, headers=HEADERS, timeout=6).json()
-            events = resp_events.get("events", [])
-            
-            for ev in events[:6]:
-                if ev.get("status", {}).get("type") == "notstarted":
-                    home_team = ev["homeTeam"]["name"]
-                    away_team = ev["awayTeam"]["name"]
-                    tournament_name = ev["tournament"]["name"]
-                    event_id = ev["id"]
-                    
-                    c1, cx, c2 = 2.00, 3.40, 3.50
-                    try:
-                        url_odds = f"{BASE}/api/v1/event/{event_id}/odds/1/all"
-                        resp_odds = requests.get(url_odds, headers=HEADERS, timeout=2).json()
-                        for market in resp_odds.get("markets", []):
-                            if market.get("marketName") == "1X2":
-                                for choice in market.get("choices", []):
-                                    frac = choice.get("fractionalValue", "1/1").split('/')
-                                    val_zecimala = float(frac[0]) / float(frac[1]) + 1
-                                    if choice.get("name") == "1": c1 = val_zecimala
-                                    if choice.get("name") == "X": cx = val_zecimala
-                                    if choice.get("name") == "2": c2 = val_zecimala
-                    except:
-                        pass
-                    
-                    meciuri_procesate.append({
-                        "Data_Formatata": datetime.strptime(data_solicitata, "%Y-%m-%d").strftime("%d.%m.%Y"),
-                        "Liga": f"{cat_name} - {tournament_name}",
-                        "Gazde": home_team,
-                        "Oaspeti": away_team,
-                        "C1": round(c1, 2),
-                        "CX": round(cx, 2),
-                        "C2": round(c2, 2)
-                    })
-        return meciuri_procesate
+        r = requests.get(
+            f"{RAPID_BASE}/fixtures",
+            headers=RAPID_HEADERS,
+            params={
+                "league": league_id,
+                "season": season,
+                "from": AZI_STR,
+                "to": SFARSIT,
+                "status": "NS"
+            },
+            timeout=8
+        )
+        if r.status_code == 200:
+            return r.json().get("response", [])
+        return []
     except:
         return []
 
-# === 3. COLECTAREA DATELOR DINAMICE (4 ZILE LIVE) ===
-azi_obiect = datetime.now()
-toate_meciurile_4_zile = []
+@st.cache_data(ttl=3600)
+def get_rapid_standings(league_id, season=2026):
+    try:
+        r = requests.get(
+            f"{RAPID_BASE}/standings",
+            headers=RAPID_HEADERS,
+            params={"league": league_id, "season": season},
+            timeout=8
+        )
+        if r.status_code == 200:
+            standings = r.json().get("response", [])
+            if standings:
+                return standings[0].get("league", {}).get("standings", [[]])[0]
+        return []
+    except:
+        return []
 
-with st.spinner("Autopilotul scanează meciurile reale din agenții pentru următoarele 4 zile..."):
-    for i in range(4):
-        data_api = (azi_obiect + timedelta(days=i)).strftime("%Y-%m-%d")
-        meciuri_zi = descarca_meciuri_zi_sofascore(data_api)
-        if meciuri_zi:
-            toate_meciurile_4_zile.extend(meciuri_zi)
+def proceseaza_rapid(fixtures, standings, comp_name):
+    team_map = {}
+    for row in standings:
+        tid = row.get("team", {}).get("id")
+        played = max(row.get("all", {}).get("played", 0), 1)
+        gf = row.get("all", {}).get("goals", {}).get("for", 0)
+        ga = row.get("all", {}).get("goals", {}).get("against", 0)
+        if tid:
+            team_map[tid] = {"played": played, "gf": gf, "ga": ga}
 
-# Baza de date locală de siguranță actualizată automat la zi
-if not toate_meciurile_4_zile:
-    d1 = azi_obiect.strftime("%d.%m.%Y")
-    d2 = (azi_obiect + timedelta(days=1)).strftime("%d.%m.%Y")
-    d3 = (azi_obiect + timedelta(days=2)).strftime("%d.%m.%Y")
-    toate_meciurile_4_zile = [
-        {"Data_Formatata": d1, "Liga": "Copa America", "Gazde": "Panama", "Oaspeti": "USA", "C1": 6.50, "CX": 4.20, "C2": 1.45},
-        {"Data_Formatata": d1, "Liga": "Suedia Allsvenskan", "Gazde": "Malmo FF", "Oaspeti": "Halmstad", "C1": 1.30, "CX": 5.00, "C2": 8.50},
-        {"Data_Formatata": d2, "Liga": "Norvegia Eliteserien", "Gazde": "Bodo/Glimt", "Oaspeti": "Brann", "C1": 1.65, "CX": 4.20, "C2": 4.50},
-        {"Data_Formatata": d2, "Liga": "Irlanda Premier", "Gazde": "Shamrock Rovers", "Oaspeti": "Dundalk", "C1": 1.40, "CX": 4.50, "C2": 7.00},
-        {"Data_Formatata": d3, "Liga": "Suedia Allsvenskan", "Gazde": "AIK Stockholm", "Oaspeti": "Kalmar", "C1": 1.55, "CX": 4.00, "C2": 5.50},
-        {"Data_Formatata": d3, "Liga": "Norvegia Eliteserien", "Gazde": "Molde", "Oaspeti": "Tromso", "C1": 1.45, "CX": 4.50, "C2": 6.00}
-    ]
+    result = []
+    for fix in fixtures:
+        try:
+            f   = fix["fixture"]
+            h   = fix["teams"]["home"]
+            a   = fix["teams"]["away"]
+            dt  = datetime.strptime(f["date"][:16], "%Y-%m-%dT%H:%M")
 
-# === 4. ASAMBLAREA BILETELOR COMBO ===
-bilet_sigur, bilet_combo, bilet_bomba = [], [], []
-cota_s, cota_c, cota_b = 1.0, 1.0, 1.0
+            sh  = team_map.get(h["id"], {})
+            sa  = team_map.get(a["id"], {})
 
-for m in toate_meciurile_4_zile:
-    c1, cx, c2 = m["C1"], m["CX"], m["C2"]
-    pred = ruleaza_predictie_ai_cota(c1, cx, c2)
-    
-    cota_1x = round(1 / ((1/c1) + (1/cx)), 2) if c1 > 0 and cx > 0 else 1.30
-    cota_x2 = round(1 / ((1/cx) + (1/c2)), 2) if cx > 0 and c2 > 0 else 1.30
-    cota_o15 = 1.28
-    
-    # FORȚĂM BILETUL VERDE SĂ ADUGE SELECȚII PÂNĂ DEPĂȘEȘTE COTA 10.00
-    if cota_s < 10.00:
-        if (pred["1"] + pred["X"]) >= 0.50 and cota_1x >= 1.26:
-            bilet_sigur.append(f"({m['Data_Formatata']}) {m['Gazde']} ➜ 1X (Cota {cota_1x})")
-            cota_s *= cota_1x
-        elif (pred["X"] + pred["2"]) >= 0.50 and cota_x2 >= 1.26:
-            bilet_sigur.append(f"({m['Data_Formatata']}) {m['Oaspeti']} ➜ X2 (Cota {cota_x2})")
-            cota_s *= cota_x2
-        elif pred["O25"] > 0.40 and cota_o15 >= 1.26:
-            bilet_sigur.append(f"({m['Data_Formatata']}) {m['Gazde']} vs {m['Oaspeti']} ➜ +1.5 Goluri (Cota {cota_o15})")
-            cota_s *= cota_o15
+            lam_h = lam_din_standing(sh.get("gf",0), sh.get("ga",0), sh.get("played",1), acasa=True) if sh else 1.35
+            lam_a = lam_din_standing(sa.get("gf",0), sa.get("ga",0), sa.get("played",1), acasa=False) if sa else 1.10
 
-    # BILETUL ALBASTRU: COMBO VALUE
-    cota_meci_min = min(c1, c2)
-    if pred["O25"] > 0.45 and len(bilet_combo) < 3:
-        bilet_combo.append(f"({m['Data_Formatata']}) {m['Gazde']} vs {m['Oaspeti']} ➜ Peste 2.5 Goluri (Cota {round(cota_meci_min * 1.5, 2)})")
-        cota_c *= (cota_meci_min * 1.5)
-        
-    # BILETUL GALBEN: BOMBĂ COTA MARE
-    if pred["GG"] > 0.45 and pred["HT"] > 0.45 and len(bilet_bomba) < 3:
-        cota_bb = round(cota_meci_min * 2.3, 2)
-        bilet_bomba.append(f"({m['Data_Formatata']}) {m['Gazde']} vs {m['Oaspeti']} ➜ GG + HT > 0.5 (Cota {cota_bb})")
-        cota_b *= cota_bb
+            prob = calculeaza_prob(lam_h, lam_a)
 
-# === 5. AFIȘARE VIZUALĂ ===
-st.subheader("🎫 Secțiunea 1: Bilete Gata Generate de AI")
-col_b1, col_b2, col_b3 = st.columns(3)
+            result.append({
+                "sursa": "API",
+                "comp": comp_name,
+                "data": dt.strftime("%d.%m"),
+                "ora": dt.strftime("%H:%M"),
+                "home": h["name"],
+                "away": a["name"],
+                "prob": prob
+            })
+        except:
+            continue
 
-with col_b1:
-    st.success(f"🟢 BILETUL SIGUR COMPUS (Cota: {round(cota_s, 2)})")
-    for ev in bilet_sigur: st.markdown(f"✔️ {ev}")
-    st.markdown(f"💰 *Miza 2 RON ➜ Câștig:* **{round(2 * cota_s, 2)} RON**")
+    return result
 
-with col_b2:
-    st.info(f"🔵 BILETUL COMBO VALUE (Cota: {round(cota_c, 2)})")
-    for ev in bilet_combo: st.markdown(f"✔️ {ev}")
-    st.markdown(f"💰 *Miza 2 RON ➜ Câștig:* **{round(2 * cota_c, 2)} RON**")
+# ══════════════════════════════════════════════════════════
+#  ASAMBLARE BILETE
+# ══════════════════════════════════════════════════════════
 
-with col_b3:
-    st.warning(f"🔥 BILETUL BOMBĂ COTA MARE (Cota: {round(cota_b, 2)})")
-    for ev in bilet_bomba: st.markdown(f"✔️ {ev}")
-    st.markdown(f"💰 *Miza 2 RON ➜ Câștig:* **{round(2 * cota_b, 2)} RON**")
+def asambleaza_bilete(selectii):
+    bilet_sigur = []
+    bilet_combo = []
+    bilet_bomba = []
+    cota_s = cota_c = cota_b = 1.0
+
+    sortate = sorted(selectii, key=lambda x: max(x["prob"]["p1"], x["prob"]["p2"]), reverse=True)
+
+    for s in sortate:
+        p    = s["prob"]
+        c1   = prob_to_cota(p["p1"])
+        cx   = prob_to_cota(p["px"])
+        c2   = prob_to_cota(p["p2"])
+        c1x  = prob_to_cota(p["p1"] + p["px"])
+        cx2  = prob_to_cota(p["px"] + p["p2"])
+        cgg  = prob_to_cota(p["p_gg"])
+        co25 = prob_to_cota(p["p_o25"])
+        pfx  = f"({s['data']} {s['ora']}) {s['home']} vs {s['away']}"
+
+        # BILET SIGUR
+        if cota_s < 20.0:
+            if p["p1"] + p["px"] >= 0.62 and 1.18 <= c1x <= 1.65:
+                bilet_sigur.append({"text": f"{pfx} ➜ 1X", "cota": c1x, "comp": s["comp"]})
+                cota_s *= c1x
+            elif p["px"] + p["p2"] >= 0.62 and 1.18 <= cx2 <= 1.65:
+                bilet_sigur.append({"text": f"{pfx} ➜ X2", "cota": cx2, "comp": s["comp"]})
+                cota_s *= cx2
+            elif p["p_o25"] >= 0.60 and 1.22 <= co25 <= 1.70:
+                bilet_sigur.append({"text": f"{pfx} ➜ Peste 2.5 goluri", "cota": co25, "comp": s["comp"]})
+                cota_s *= co25
+            elif p["p1"] >= 0.55 and 1.20 <= c1 <= 1.75:
+                bilet_sigur.append({"text": f"{pfx} ➜ 1", "cota": c1, "comp": s["comp"]})
+                cota_s *= c1
+
+        # BILET COMBO
+        if len(bilet_combo) < 5 and cota_c < 20.0:
+            if p["p1"] >= 0.46 and 1.60 <= c1 <= 3.00:
+                bilet_combo.append({"text": f"{pfx} ➜ 1", "cota": c1, "comp": s["comp"]})
+                cota_c *= c1
+            elif p["p2"] >= 0.46 and 1.60 <= c2 <= 3.00:
+                bilet_combo.append({"text": f"{pfx} ➜ 2", "cota": c2, "comp": s["comp"]})
+                cota_c *= c2
+            elif p["p_gg"] >= 0.52 and 1.60 <= cgg <= 2.80:
+                bilet_combo.append({"text": f"{pfx} ➜ GG", "cota": cgg, "comp": s["comp"]})
+                cota_c *= cgg
+
+        # BILET BOMBĂ
+        if len(bilet_bomba) < 4:
+            if c2 >= 3.00 and p["p2"] >= 0.28:
+                bilet_bomba.append({"text": f"{pfx} ➜ 2 (surpriză)", "cota": c2, "comp": s["comp"]})
+                cota_b *= c2
+            elif c1 >= 3.00 and p["p1"] >= 0.28:
+                bilet_bomba.append({"text": f"{pfx} ➜ 1 (surpriză)", "cota": c1, "comp": s["comp"]})
+                cota_b *= c1
+            elif cgg >= 3.00 and p["p_gg"] >= 0.38:
+                bilet_bomba.append({"text": f"{pfx} ➜ GG cotă mare", "cota": cgg, "comp": s["comp"]})
+                cota_b *= cgg
+            elif co25 >= 3.00 and p["p_o25"] >= 0.35:
+                bilet_bomba.append({"text": f"{pfx} ➜ O2.5 cotă mare", "cota": co25, "comp": s["comp"]})
+                cota_b *= co25
+
+    return {
+        "sigur": {"sel": bilet_sigur, "cota": round(cota_s, 2)},
+        "combo": {"sel": bilet_combo, "cota": round(cota_c, 2)},
+        "bomba": {"sel": bilet_bomba, "cota": round(cota_b, 2)},
+    }
+
+# ══════════════════════════════════════════════════════════
+#  INTERFAȚĂ
+# ══════════════════════════════════════════════════════════
+
+st.title("🎯 BetMachine Pro — Program 55")
+st.markdown(f"📅 **{AZI.strftime('%d.%m.%Y %H:%M')}** | 🔄 Meciuri din **{AZI_STR}** până la **{SFARSIT}**")
+st.markdown("⚡ Surse: **API-Football** (doar meciuri active)")
+
+if not RAPID_KEY:
+    st.sidebar.error("❌ Cheia API-Football lipsește!")
+else:
+    st.sidebar.success("✅ Cheie API-Football activă")
+
+st.sidebar.markdown("---")
+st.sidebar.markdown("### 📊 Surse active")
+
+toate_selectiile = []
+rapid_count = 0
+
+with st.spinner("⏳ Se descarcă meciurile active (API-Football)..."):
+    for liga in RAPID_LEAGUES:
+        fixtures  = get_rapid_fixtures(liga["id"])
+        if not fixtures:
+            continue
+        standings = get_rapid_standings(liga["id"])
+        proc = proceseaza_rapid(fixtures, standings, liga["name"])
+        if proc:
+            toate_selectiile.extend(proc)
+            rapid_count += len(proc)
+
+st.sidebar.success(f"✅ API-Football: **{rapid_count}** meciuri active")
+
+if not toate_selectiile:
+    st.error("❌ Nu există meciuri active în acest moment!")
+    st.stop()
+
+st.success(f"### ✅ Total meciuri analizate: **{len(toate_selectiile)}** din {len(set(s['comp'] for s in toate_selectiile))} competiții")
+
+# ══════════════════════════════════════════════════════════
+#  BILETE
+# ══════════════════════════════════════════════════════════
+
+bilete = asambleaza_bilete(toate_selectiile)
 
 st.markdown("---")
-st.subheader("📊 Secțiunea 2: Toate Meciurile Scanate din Server")
-for m in toate_meciurile_4_zile[:12]:
-    st.markdown(f"⚽ **[{m['Data_Formatata']}] {m['Liga']}:** {m['Gazde']} vs {m['Oaspeti']} | *Cote:* 1: {m['C1']} | X: {m['CX']} | 2: {m['C2']}")
+st.subheader("🎫 Biletele Generate de Algoritmul Poisson/Dixon-Coles")
+
+col1, col2, col3 = st.columns(3)
+
+# BILET SIGUR
+with col1:
+    cs = bilete["sigur"]["cota"]
+    st.success("🟢 BILET SIGUR")
+    st.metric("Cotă Totală", cs, "Obiectiv ≥ 20")
+    st.caption("Strategie: 1X / X2 / O2.5")
+    if bilete["sigur"]["sel"]:
+        for ev in bilete["sigur"]["sel"]:
+            st.markdown(f"✔️ `{ev['cota']}` {ev['text']}")
+    st.markdown(f"💰 5 RON ➜ **{round(5*cs,2)} RON**")
+
+# BILET COMBO
+with col2:
+    cc = bilete["combo"]["cota"]
+    st.info("🔵 BILET COMBO VALUE")
+    st.metric("Cotă Totală", cc, "3-5 selecții")
+    if bilete["combo"]["sel"]:
+        for ev in bilete["combo"]["sel"]:
+            st.markdown(f"✔️ `{ev['cota']}` {ev['text']}")
+    st.markdown(f"💰 5 RON ➜ **{round(5*cc,2)} RON**")
+
+# BILET BOMBĂ
+with col3:
+    cb = bilete["bomba"]["cota"]
+    st.warning("🔥 BILET BOMBĂ")
+    st.metric("Cotă Totală", cb, "Surprize ≥ 3.00")
+    if bilete["bomba"]["sel"]:
+        for ev in bilete["bomba"]["sel"]:
+            st.markdown(f"✔️ `{ev['cota']}` {ev['text']}")
+    st.markdown(f"💰 2 RON ➜ **{round(2
